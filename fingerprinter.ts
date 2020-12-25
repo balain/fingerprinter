@@ -1,6 +1,10 @@
-import FS from "fs"
-import Path from "path"
+
+const FS = require("fs")
+const Path = require("path")
+const OS = require('os')
+
 const md5File = require("md5-file") // To capture the fingerprint of each file
+const fcrypto = require('crypto')
 
 // Processed data
 var files: any[] = []
@@ -10,12 +14,15 @@ let EXCLUDE_DIR = ['.git', 'node_modules']
 // List of files to exclude
 let EXCLUDE_FILE = []
 
+let delta: any[] = []
+let priorChanges: any[] = []
+
 /**
  * Should the directory be processed?
  * @param  {string} dirName Relative path name
  * @returns {boolean} false if the directory is in the EXCLUDE list; true otherwise
  */
-function includeDirectory(dirName: string) {
+function includeDirectory(dirName: string): boolean {
   for (let i = 0; i < EXCLUDE_DIR.length; i++) {
     if (dirName.includes(EXCLUDE_DIR[i])) {
       return false // Escape as soon as possible
@@ -29,7 +36,7 @@ function includeDirectory(dirName: string) {
  * @param  {string} dir Directory starting point
  * @returns Array of files with relative paths
  */
-function processDirectory(dir: string) {
+function processDirectory(dir: string): any {
   return new Promise<any[]>((resolve, reject) => {
     FS.readdirSync(dir).forEach((file: string) => {
       const absPath: string = Path.join(dir, file);
@@ -48,65 +55,104 @@ function processDirectory(dir: string) {
   })
 }
 
-try {
-  const cmd: string = process.argv.slice(2)[0]
-  let dir: string = process.argv.slice(2)[1]
-  console.error(`cmd: ${cmd}; dir: ${dir}`)
+/**
+ * Store a snapshot in a standard location (temp folder)
+ * @param  {string} dir Full path of the directory
+ */
+function takeSnapshot(dir: string): void {
   const absPath = Path.resolve(dir)
-  switch (cmd) {
+  console.error(`adding ${dir}/${absPath}`)
+  try {
+    process.chdir(dir)
+    processDirectory('.')
+      .then((fileList: string[]) => {
+        saveSnapshot({ path: absPath, processDate: new Date(), files: fileList })
+        console.error(`took snapshot!`)
+      })
+      .catch((err: any) => {
+        console.error(`ERROR: ${err}`)
+      })
+  } catch (err) {
+    console.error(`ERROR: ${err.message}`)
+  }
+}
+
+// Snapshot filename == sha256(dir)
+function getSnapshotFilename(dir: string): any {
+  const hash = fcrypto.createHash('sha256')
+  const hashVal = hash.update(dir).digest('hex')
+  const filename = OS.tmpdir() + Path.sep + hashVal
+  return ({ filename: filename, hash: hashVal })
+}
+
+function saveSnapshot(data: any) {
+  const tmpFileInfo = getSnapshotFilename(data.path)
+  data.tmpFilename = tmpFileInfo.filename
+  data.pathHash = tmpFileInfo.hash
+  FS.writeFileSync(tmpFileInfo.filename, JSON.stringify(data))
+}
+
+/**
+ * Has the directory changed since the prior snapshot?
+ * @param  {string} dir
+ * @returns {boolean} Yes (true) or No (false)
+ */
+async function isChanged(dir: string, updateSnapshot: boolean = false): Promise<any> {
+  const absPath = Path.resolve(dir)
+  const snapshotFileInfo = getSnapshotFilename(absPath)
+  let fingerprint: string = snapshotFileInfo.filename
+  // Get the old results (i.e. read the local fingerprint file)
+  if (FS.existsSync(fingerprint)) {
+    let oldResults: any = JSON.parse(FS.readFileSync(fingerprint, 'utf8'))
+    // Get the current values
+    process.chdir(dir) // Change to the processing folder so all relative paths are sane
+    const fileList: string[] = await processDirectory('.')
+    // .then((fileList: string[]) => {
+    delta = []
+    // Get the current results
+    let newResults: any = { path: absPath, processDate: new Date(), files: fileList }
+    // Now compare
+    // TODO: Process the file data by content, rather than position
+    if (newResults.files.length == oldResults.files.length) {
+      for (let i = 0; i < newResults.files.length; i++) {
+        if ((newResults.files[i].name != oldResults.files[i].name)) {
+          delta.push({ new: newResults.files[i].name, old: oldResults.files[i].name })
+        }
+        else if ((newResults.files[i].md5 != oldResults.files[i].md5)) {
+          delta.push(newResults.files[i].name)
+        }
+      }
+      if (updateSnapshot) { saveSnapshot(newResults) }
+      return (delta)
+    } else {
+      if (updateSnapshot) { saveSnapshot(newResults) }
+      delta = [{ new: newResults.files, old: oldResults.files }]
+    }
+  } else { // Snapshot file doesn't exist
+    throw new Error('Snapshot file not found. Please take a snapshot first.')
+  }
+}
+
+module.exports = { isChanged, takeSnapshot }
+
+if (require.main === module) {
+  const action = process.argv.slice(2)[0]
+  const pathName = process.argv.slice(2)[1]
+  switch (action) {
     case 'add':
-      console.error(`adding ${dir}`)
-      process.chdir(dir)
-      processDirectory('.')
-        .then((fileList: string[]) => {
-          const results = { path: absPath, processDate: new Date(), files: fileList }
-          console.log(JSON.stringify(results))
-        })
-        .catch((err) => {
-          console.error(`ERROR: ${err}`)
-        })
+      takeSnapshot(pathName)
       break;
     case 'check':
-      // TODO: Fix the command-line processing
-      let fingerprint: string = process.argv.slice(2)[2]
-      console.error(`checking ${dir} against ${fingerprint}`)
-      // Get the old results (i.e. read the local fingerprint file)
-      let oldResults: any = JSON.parse(FS.readFileSync(fingerprint, 'utf8'))
-      // Get the current values
-      process.chdir(dir) // Change to the processing folder so all relative paths are sane
-      processDirectory('.')
-        .then((fileList: string[]) => {
-          const delta = [] // Capture differences
-          // Get the current results
-          let newResults: any = { path: absPath, processDate: new Date(), files: fileList }
-          // Now compare
-          // TODO: Process the file data by content, rather than position
-          if (newResults.files.length == oldResults.files.length) {
-            for (let i = 0; i < newResults.files.length; i++) {
-              if (
-                (newResults.files[i].name != oldResults.files[i].name) ||
-                (newResults.files[i].md5 != oldResults.files[i].md5)
-              ) {
-                delta.push({ new: newResults.files[i], old: oldResults.files[i] })
-              }
-            }
-            if (delta.length) {
-              console.error(`Differences: `, delta)
-            } else {
-              console.log(`No change`)
-            }
-          } else {
-            console.log(newResults.files)
-            console.log(`different lengths: New: ${newResults.files.length} vs. Old: ${oldResults.files.length}`)
-          }
+      isChanged(pathName, true)
+        .then((changes: any[]) => {
+          console.log(`latestChanges: `, changes.length ? changes : 'no changes')
         })
-        .catch((err) => {
-          console.error(`ERROR: ${err}`)
+        .catch((err: any) => {
+          console.error(err.message)
         })
       break;
     default:
+      console.error(`Please specify either 'add' or 'check' - plus a directory name.`)
       break;
   }
-} catch (err) {
-  console.error(`ERROR: ${err}`)
 }
