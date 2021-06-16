@@ -3,6 +3,8 @@ const FS = require("fs")
 const Path = require("path")
 const OS = require('os')
 
+const debug = require('debug')('fingerprinter')
+
 const md5File = require("md5-file") // To capture the fingerprint of each file
 const fcrypto = require('crypto')
 
@@ -104,9 +106,12 @@ async function isChanged(dir: string, updateSnapshot: boolean = false): Promise<
   // Get the old results (i.e. read the local fingerprint file)
   if (FS.existsSync(fingerprint)) {
     let oldResults: any = JSON.parse(FS.readFileSync(fingerprint, 'utf8'))
+    debug(`got the oldResults (fingerprint: ${fingerprint})`)
     // Get the current values
+    debug(`chdir(${dir})`)
     process.chdir(dir) // Change to the processing folder so all relative paths are sane
     const fileList: string[] = await processDirectory('.')
+    debug(`fileList: ${fileList.length} items long`)
     // .then((fileList: string[]) => {
     delta = []
     // Get the current results
@@ -136,6 +141,7 @@ async function isChanged(dir: string, updateSnapshot: boolean = false): Promise<
 module.exports = { isChanged, takeSnapshot }
 
 if (require.main === module) {
+  debug(`in main`)
   const action = process.argv.slice(2)[0]
   const pathName = process.argv.slice(2)[1]
   switch (action) {
