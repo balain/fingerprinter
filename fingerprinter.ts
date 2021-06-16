@@ -109,7 +109,7 @@ async function isChanged(dir: string, updateSnapshot: boolean = false): Promise<
   debug(`isChanged(${dir}, ${updateSnapshot}) called`)
   const absPath = Path.resolve(dir)
   const snapshotFileInfo = getSnapshotFilename(absPath)
-  debug(`snapshotFileInfo: ${snapshotFileInfo}`)
+  debug(`snapshotFileInfo: `, snapshotFileInfo)
   let fingerprint: string = snapshotFileInfo.filename
   // Get the old results (i.e. read the local fingerprint file)
   if (FS.existsSync(fingerprint)) {
@@ -177,6 +177,11 @@ if (require.main === module) {
         .catch((err: any) => {
           console.error(err.message)
         })
+      break;
+    case 'snapshotFilename':
+      const snapshotFilename = getSnapshotFilename(Path.resolve(pathName))
+      debug(`snapshotFilename: `, snapshotFilename)
+      console.log(`snapshot info: `, snapshotFilename)
       break;
     default:
       console.error(`Please specify either 'add' or 'check' - plus a directory name.`)
