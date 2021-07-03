@@ -3,6 +3,8 @@ const FS = require("fs")
 const Path = require("path")
 const OS = require('os')
 
+const debug = require('debug')('fingerprinter')
+
 const md5File = require("md5-file") // To capture the fingerprint of each file
 const fcrypto = require('crypto')
 
@@ -63,11 +65,13 @@ function takeSnapshot(dir: string): void {
   const absPath = Path.resolve(dir)
   console.error(`adding ${dir}/${absPath}`)
   try {
+    debug(`processing ${dir}`)
     process.chdir(dir)
     processDirectory('.')
       .then((fileList: string[]) => {
+        debug(`saving snapshot with ${fileList.length} files`)
         saveSnapshot({ path: absPath, processDate: new Date(), files: fileList })
-        console.error(`took snapshot!`)
+        console.log(`Saved snapshot!`)
       })
       .catch((err: any) => {
         console.error(`ERROR: ${err}`)
@@ -79,16 +83,20 @@ function takeSnapshot(dir: string): void {
 
 // Snapshot filename == sha256(dir)
 function getSnapshotFilename(dir: string): any {
+  debug(`getSnapshotFilename(${dir}) called`)
   const hash = fcrypto.createHash('sha256')
   const hashVal = hash.update(dir).digest('hex')
   const filename = OS.tmpdir() + Path.sep + hashVal
+  debug(`...result: ${filename}, ${hashVal}`)
   return ({ filename: filename, hash: hashVal })
 }
 
 function saveSnapshot(data: any) {
+  debug(`saveSnapshot(${data}) called`)
   const tmpFileInfo = getSnapshotFilename(data.path)
   data.tmpFilename = tmpFileInfo.filename
   data.pathHash = tmpFileInfo.hash
+  debug(`...result: ${tmpFileInfo.filename}, data`)
   FS.writeFileSync(tmpFileInfo.filename, JSON.stringify(data))
 }
 
@@ -98,22 +106,29 @@ function saveSnapshot(data: any) {
  * @returns {boolean} Yes (true) or No (false)
  */
 async function isChanged(dir: string, updateSnapshot: boolean = false): Promise<any> {
+  debug(`isChanged(${dir}, ${updateSnapshot}) called`)
   const absPath = Path.resolve(dir)
   const snapshotFileInfo = getSnapshotFilename(absPath)
+  debug(`snapshotFileInfo: `, snapshotFileInfo)
   let fingerprint: string = snapshotFileInfo.filename
   // Get the old results (i.e. read the local fingerprint file)
   if (FS.existsSync(fingerprint)) {
     let oldResults: any = JSON.parse(FS.readFileSync(fingerprint, 'utf8'))
+    debug(`...got the oldResults (fingerprint: ${fingerprint})`)
     // Get the current values
+    debug(`...chdir(${dir})`)
     process.chdir(dir) // Change to the processing folder so all relative paths are sane
     const fileList: string[] = await processDirectory('.')
+    debug(`...fileList: ${fileList.length} items long`)
     // .then((fileList: string[]) => {
     delta = []
     // Get the current results
     let newResults: any = { path: absPath, processDate: new Date(), files: fileList }
+    debug(`...newResults: ${absPath}, ${fileList.length} files`)
     // Now compare
     // TODO: Process the file data by content, rather than position
     if (newResults.files.length == oldResults.files.length) {
+      debug(`......same # of files: ${newResults.files.length}`)
       for (let i = 0; i < newResults.files.length; i++) {
         if ((newResults.files[i].name != oldResults.files[i].name)) {
           delta.push({ new: newResults.files[i].name, old: oldResults.files[i].name })
@@ -122,10 +137,21 @@ async function isChanged(dir: string, updateSnapshot: boolean = false): Promise<
           delta.push(newResults.files[i].name)
         }
       }
-      if (updateSnapshot) { saveSnapshot(newResults) }
+      if (updateSnapshot) {
+        debug(`......saving snapshot`)
+        saveSnapshot(newResults)
+      } else {
+        debug(`......not saving snapshot`)
+      }
       return (delta)
     } else {
-      if (updateSnapshot) { saveSnapshot(newResults) }
+      debug(`......** Different *** # of files: new:${newResults.files.length} vs old:${oldResults.files.length}`)
+      if (updateSnapshot) {
+        debug(`......saving snapshot`)
+        saveSnapshot(newResults)
+      } else {
+        debug(`......not saving snapshot`)
+      }
       delta = [{ new: newResults.files, old: oldResults.files }]
     }
   } else { // Snapshot file doesn't exist
@@ -136,6 +162,7 @@ async function isChanged(dir: string, updateSnapshot: boolean = false): Promise<
 module.exports = { isChanged, takeSnapshot }
 
 if (require.main === module) {
+  debug(`in main`)
   const action = process.argv.slice(2)[0]
   const pathName = process.argv.slice(2)[1]
   switch (action) {
@@ -150,6 +177,11 @@ if (require.main === module) {
         .catch((err: any) => {
           console.error(err.message)
         })
+      break;
+    case 'snapshotFilename':
+      const snapshotFilename = getSnapshotFilename(Path.resolve(pathName))
+      debug(`snapshotFilename: `, snapshotFilename)
+      console.log(`snapshot info: `, snapshotFilename)
       break;
     default:
       console.error(`Please specify either 'add' or 'check' - plus a directory name.`)
