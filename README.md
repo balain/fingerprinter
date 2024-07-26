@@ -1,5 +1,15 @@
 # fingerprinter
 
+# This Repo is no longer maintained
+
+**This repository is no longer active or maintained.**
+
+*Please check out the replacement repositories*
+- Python (https://github.com/balain/fingerprinter-py) and 
+- Rust (https://github.com/balain/fingerprinter-rs)
+
+# Description
+
 Take a (recursive) snapshot of a folder & compare against earlier snapshots.
 
 Minimal external dependencies - only `md5-file` (to fingerprint individual files) & `crypto` (to set the snapshot filename, based on the full directory pathname)
